@@ -201,7 +201,8 @@ def draw_detections(frame, detections):
         if det["real_world_location"][0] is not None:
             cv2.putText(frame, f"Loc: {det['real_world_location']}", (x1, y1 - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
 
-    return frame
+    # 🔹 Convert BGR to RGB before returning the frame for display
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
 # Streamlit UI Setup
