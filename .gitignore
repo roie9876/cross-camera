@@ -1,0 +1,11 @@
+# Ignore video files
+*.mp4
+*.avi
+*.mov
+
+# Ignore other common files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
