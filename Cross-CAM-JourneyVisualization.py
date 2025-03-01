@@ -92,7 +92,7 @@ st.sidebar.write("Select which cameras should contribute detections to the journ
 include_cameras = st.sidebar.multiselect("Cameras to include", options=[1, 2, 3, 4, 5], default=[1, 2])
 
 # -----------------------------
-# Camera Locations (default near Khan Younis)
+# Expose Camera Locations
 # -----------------------------
 st.sidebar.markdown("### Camera Locations")
 st.sidebar.write("These are the geographic coordinates for each camera.")
@@ -107,7 +107,6 @@ cam4_lon = st.sidebar.number_input("Camera 4 Longitude", value=34.3230, format="
 cam5_lat = st.sidebar.number_input("Camera 5 Latitude", value=31.3505, format="%.6f")
 cam5_lon = st.sidebar.number_input("Camera 5 Longitude", value=34.3205, format="%.6f")
 
-# Build a dictionary for camera coordinates
 camera_coords = {
     1: (lat1, lon1),
     2: (lat2, lon2),
@@ -276,7 +275,7 @@ def detect_frame(frame, video_id, camera_lat, camera_lon, conf_threshold=0.5):
             detections.append(detection)
             if video_id in include_cameras:
                 st.session_state.journey_log.append({
-                    "alert_id": alert_id,
+                    "alert_id": str(alert_id),
                     "timestamp": current_time,
                     "video_id": str(video_id),
                     "lat": real_lat,
@@ -313,6 +312,24 @@ def draw_detections(frame, detections, video_id=None):
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 # -----------------------------
+# Create a PathLayer for tracking the person over time.
+# -----------------------------
+def create_path_data(journey_df, selected_ids, color_dict):
+    path_data = []
+    for aid in selected_ids:
+        alert_points = journey_df[journey_df["alert_id"] == aid].sort_values("timestamp")
+        if not alert_points.empty:
+            path = alert_points[["longitude", "latitude"]].values.tolist()
+            path_data.append({
+                "alert_id": str(aid),
+                "path": path,
+                "color": list(color_dict.get(aid, [255, 0, 0, 200]))
+            })
+    return path_data
+
+path_layer = None  # Will be created later in the visualization tab
+
+# -----------------------------
 # Streamlit Tabs: Live Tracking & Journey Visualization
 # -----------------------------
 tab1, tab2 = st.tabs(["Live Tracking", "Journey Visualization"])
@@ -321,7 +338,6 @@ with tab1:
     st.header("Live Tracking")
     st.write("For each camera, select whether to use its video. If no video is uploaded, the default video from the 'videos' folder will be loaded if available.")
     
-    # For each camera, add a checkbox and file uploader.
     use_cam1 = st.checkbox("Use Camera 1", value=True, key="use_cam1")
     file_cam1 = st.file_uploader("Camera 1 Video", type=["mp4", "avi", "mov"], key="v1")
     st.write("Default for Camera 1:", default_video_paths[1])
@@ -389,6 +405,8 @@ with tab2:
     st.write("This tab displays the journey log (with timestamps, camera IDs, and images) on a map along with an alert gallery (photo book).")
     if st.session_state.journey_log:
         df = pd.DataFrame(st.session_state.journey_log)
+        # Convert alert_id to string
+        df["alert_id"] = df["alert_id"].astype(str)
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
         df = df.rename(columns={"lat": "latitude", "lon": "longitude"})
         st.subheader("Journey Data Table")
@@ -401,6 +419,7 @@ with tab2:
             "longitude": "mean",
             "video_id": lambda x: ','.join(sorted(set(map(str, x))))
         }).reset_index()
+        summary_df["alert_id"] = summary_df["alert_id"].astype(str)
         summary_df["timestamp_str"] = summary_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
         unique_ids = sorted(summary_df["alert_id"].unique())
         
@@ -412,7 +431,12 @@ with tab2:
             # Checkbox label includes alert id, start time, and camera info.
             if col.checkbox(f"Alert {row['alert_id']}<br/>{row['timestamp_str']}<br/>Cam: {row['video_id']}", key=f"alert_{row['alert_id']}"):
                 selected_alert_ids.append(row["alert_id"])
-            col.image(st.session_state.alert_images.get(row["alert_id"], ""), caption=f"Alert {row['alert_id']}", width=100)
+            # Check if an image exists before displaying it.
+            img = st.session_state.alert_images.get(row["alert_id"], None)
+            if img:
+                col.image(img, caption=f"Alert {row['alert_id']}", width=100)
+            else:
+                col.write("No image")
         
         if not selected_alert_ids:
             selected_ids = unique_ids
@@ -439,13 +463,38 @@ with tab2:
             [0, 0, 128, 200]
         ]
         color_dict = {aid: color_palette[i % len(color_palette)] for i, aid in enumerate(unique_ids)}
-        journey_df["color"] = journey_df["alert_id"].apply(lambda aid: color_dict.get(aid, [255, 0, 0, 200]))
+        journey_df["color"] = journey_df["alert_id"].apply(lambda aid: list(color_dict.get(aid, [255, 0, 0, 200])))
         
-        summary_df["color"] = summary_df["alert_id"].apply(lambda aid: color_dict.get(aid, [255, 0, 0, 200]))
+        summary_df["color"] = summary_df["alert_id"].apply(lambda aid: list(color_dict.get(aid, [255, 0, 0, 200])))
         summary_df["image"] = summary_df["alert_id"].apply(lambda aid: st.session_state.alert_images.get(aid, ""))
         summary_df = summary_df[summary_df["alert_id"].isin(selected_ids)]
         
-        # PyDeck layers:
+        # Create a PathLayer for each alert track.
+        def create_path_data(journey_df, selected_ids, color_dict):
+            path_data = []
+            for aid in selected_ids:
+                alert_points = journey_df[journey_df["alert_id"] == aid].sort_values("timestamp")
+                if not alert_points.empty:
+                    path = alert_points[["longitude", "latitude"]].values.tolist()
+                    path_data.append({
+                        "alert_id": str(aid),
+                        "path": path,
+                        "color": list(color_dict.get(aid, [255, 0, 0, 200]))
+                    })
+            return path_data
+        
+        path_data = create_path_data(journey_df, selected_ids, color_dict)
+        path_layer = pdk.Layer(
+            "PathLayer",
+            data=path_data,
+            get_path="path",
+            get_color="color",
+            width_scale=20,
+            width_min_pixels=2,
+            pickable=True,
+        )
+        
+        # PyDeck layers for journey events, camera locations, and summary text.
         journey_layer = pdk.Layer(
             "ScatterplotLayer",
             data=journey_df,
@@ -510,7 +559,7 @@ with tab2:
         )
         
         deck = pdk.Deck(
-            layers=[journey_layer, camera_layer, text_layer, summary_text_layer],
+            layers=[journey_layer, path_layer, camera_layer, text_layer, summary_text_layer],
             initial_view_state=view_state,
             map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
             tooltip={"html": tooltip_html, "style": {"color": "white"}}
