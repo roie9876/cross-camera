@@ -45,7 +45,7 @@ HORIZONTAL_FOV = 60      # Camera horizontal field of view (degrees)
 TIME_WINDOW_SECONDS = st.slider("Set Time Window for Cross-Camera Comparison (Seconds)", 1, 600, 180, 1)
 
 # UI: Expose the similarity threshold in the sidebar
-similarity_threshold = st.sidebar.slider("Similarity Threshold", 0.70, 1.00, 0.80, 0.01)
+similarity_threshold = st.sidebar.slider("Similarity Threshold", 0.70, 1.00, 0.85, 0.01)
 
 # Camera location inputs
 st.sidebar.subheader("Enter Camera Locations")
